@@ -1,0 +1,6 @@
+*~
+pascal-lint
+*.exe
+*.o
+*.ppu
+tests/test_passrc_two_times
