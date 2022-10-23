@@ -1,6 +1,6 @@
 Pascal lint (code analysis for potential errors)
 
-**TODO: The current project is just a test of fcl-passrc, the checks documented below are NOT yet implemented. After planning this project, I simply didn't fing the time to make it actually happen. Help (PRs) is most welcome!**
+**TODO: The current project is just a test of `fcl-passrc`, nothing more. The checks documented below are NOT yet implemented. After planning this project, I simply didn't find the time to make it actually happen. Help (PRs) is most welcome!**
 
 # What it does
 
@@ -22,21 +22,46 @@ The checks done right now are:
 
     TODO: Use PasResolver to resolve symbols?
 
-2. TODO: Check that the constructor and destructors contain an "inherited" call. Forgetting them is an easy mistake, and in 99% cases they should be there. Either "inherited;" or "inherited Create / Destroy" will be fine.
+2. Check that the constructor and destructors contain an `inherited` call. Forgetting the `inherited` call is an easy mistake, and in 99% cases it should be there. Either `inherited;` or `inherited Create ... / Destroy ...;` will be fine.
 
-    LIMITATION: Again, we only have a parser, we cannot do code flow analysis. It would be beneficial to extend this check to "all code paths must call the inherited constructor / destructor", not just "a call to the inherited constructor / destructor is somewhere inside". But we simply cannot do this without implementing a code flow analysis on top of the parser information, and implementing that is not something within the scope of this tool.
+    LIMITATION: We only have a parser, we cannot do code flow analysis. It would be beneficial to extend this check to _"all code paths must call the inherited constructor / destructor"_, not just _"a call to the inherited constructor / destructor is somewhere inside"_. But we simply cannot do this without implementing a code flow analysis on top of the parser information, and implementing that is not something within the scope of this tool.
 
     TODO: A way to mark some constructor / destructor explicitly as "I know what I'm doing, don't signal a warning here because it doesn't need inherited".
 
-    TODO: A way to mark some methods as "overridden must call inherited" would be useful. This way we could extend this check to the specific routines. Many virtual methods don't need to have an "inherited" call, but some of them do (the class will not function properly if you forget an "inherited" call). So it would be nice to be able to extend this check for them.
+    TODO: A way to mark some other methods as "overridden must call inherited" would be useful. This way we could extend this check to the specific routines. Many virtual methods don't need to have an "inherited" call, but some of them do (the class will not function properly if you forget an "inherited" call). So it would be nice to be able to extend this check for them.
 
-3. Check FreeAndNil is not done on something that is definitely not an object instance.
+3. Check `FreeAndNil` is only done on something that is definitely an object instance.
 
-    The check will capture only some invalid cases -- again, we're just a parser, we do not resolve the types of variables with 100% reliability.
+    The goal is to capture such invalid code that unfortunately compiles:
+
+    ```pascal
+    uses SysUtils;
+    var
+      I: Integer;
+      W: Word;
+    begin
+      FreeAndNil(I);
+      FreeAndNil(W); // W doesn't even have the same size as Pointer, but stupid FreeAndNil still compiles!
+    end.
+    ```
+
+    LIMITATION: The check will capture only some invalid cases. Again, we're just a parser, we do not resolve the types of variables with 100% reliability.
 
     TODO: Use PasResolver to resolve symbols?
 
-4. Warn about for-loop counter variable being used outside of the loop, and the loop has no "Break".
+4. Warn when for-loop counter variable being used outside of the loop, and the loop has no "Break". The loop variable value is undefined if you exit the loop without `Break`.
+
+    The goal is to capture such invalid code that unfortunately compiles:
+
+    ```pascal
+    var
+      I: Integer;
+    begin
+      for I := 0 to 10 do
+        Writeln(I);
+      Writeln('Value of I is undefined now: ', I);
+    end.
+    ```
 
 5. Checks that if you overload the constructor, you have also overloaded the parameterless constructor (or you have secured from it already by making non-public constructor).
 
@@ -44,9 +69,23 @@ The checks done right now are:
     https://stackoverflow.com/questions/14003153/how-to-hide-the-inherited-tobject-constructor-while-the-class-has-overloaded-one
     http://andy.jgknet.de/blog/2011/07/hiding-the-tobject-create-constructor/
 
-6. Check you don't call "Exception.Create" instead of "raise Exception.Create"? It is an easy mistake to forget the "raise" keyword.
+6. Check you don't call `Exception.Create` instead of `raise Exception.Create`. It is an easy mistake to forget the `raise` keyword.
 
 7. Check for ";;", two semicolons one after the other. This is usually a typo.
+
+8. Check you don't call constructor as a regular method. This causes wild bugs, be reinitializing already-initialized instance, and the constructors (and general class logic) are in general *not* ready for this.
+
+    The goal is to capture such invalid code that unfortunately compiles:
+
+    ```pascal
+    var
+      O: TObject;
+    begin
+      O := TObject.Create;
+      O.Create; // calling constructor like this is invalid
+      O.Free;
+    end.
+    ```
 
 # Downloading
 
