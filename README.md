@@ -8,13 +8,15 @@ This tool parses your modern Object Pascal code and tries to find common mistake
 
 The checks done right now are:
 
-1. Check the validity of parameters for Format (http://www.freepascal.org/docs-html/rtl/sysutils/format.html) and friends. The goal is to warn you about invocations of Format that will *definitely* cause an EConvertError warning at runtime. For example this code:
+1. Check the validity of parameters for Format (http://www.freepascal.org/docs-html/rtl/sysutils/format.html) and friends.
 
-    ```
-    Format('%s', [123])
+    The goal is to capture invocations of `Format` that will *definitely* cause an `EConvertError` exception at runtime. For example this code:
+
+    ```pascal
+    Format('%s', [123]);
     ```
 
-    compiles fine, but will cause a EConvertError exception at runtime (since placeholder "%s" doesn't match an Integer "123"; you should have used "%s" instead). It checks the subset of Format calls -- when the format pattern is constant, and the number and types of arguments are (at least partially known).
+    It compiles, but it will cause a `EConvertError` exception at runtime (since placeholder `%s` doesn't match a integer `123`; you should have used `%d` instead). It checks the subset of `Format` calls -- when the format pattern is constant, and the number and types of arguments are (at least partially known).
 
     It detects not only Format, but also CreateFmt methods of the Exception class, and (if you use --castle-engine-extensions option) the WritelnLog and WritelnWarning methods.
 
@@ -23,6 +25,29 @@ The checks done right now are:
     TODO: Use PasResolver to resolve symbols?
 
 2. Check that the constructor and destructors contain an `inherited` call. Forgetting the `inherited` call is an easy mistake, and in 99% cases it should be there. Either `inherited;` or `inherited Create ... / Destroy ...;` will be fine.
+
+    The goal is to capture such invalid code that unfortunately compiles:
+
+    ```pascal
+    type
+      TMyClass = class(TSomeAncestor)
+        SomethingInside: TObject;
+        constructor Create;
+        destructor Destroy; override;
+      end;
+
+    constructor TMyClass.Create;
+    begin
+      // inherited -- without this call, TSomeAncestor initialization is not done
+      SomethingInside := TObject.Create;
+    end;
+
+    destructor TMyClass.Destroy;
+    begin
+      FreeAndNil(SomethingInside);
+      // inherited -- without this call, TSomeAncestor finalization is not done
+    end;
+    ```
 
     LIMITATION: We only have a parser, we cannot do code flow analysis. It would be beneficial to extend this check to _"all code paths must call the inherited constructor / destructor"_, not just _"a call to the inherited constructor / destructor is somewhere inside"_. But we simply cannot do this without implementing a code flow analysis on top of the parser information, and implementing that is not something within the scope of this tool.
 
@@ -65,11 +90,38 @@ The checks done right now are:
 
 5. Checks that if you overload the constructor, you have also overloaded the parameterless constructor (or you have secured from it already by making non-public constructor).
 
+    This is a problem in Delphi, caused by Delphi `overload` interpretation meaning "it doesn't hide other identifiers in the same scope, it merely extends what you can do". It means that if you have such class:
+
+    ```pascal
+    type
+      TMyClass = class
+        constructor CreateOne(const S: String); overload;
+        constructor CreateTwo(const S1, S2: String); overload;
+      end;
+    ```
+
+    ... I can still create an instance of it using parameterless constructor (which is likely a bug, because then I'm not doing any TMyClass-specific initialization) by
+
+    ```pascal
+    M := TMyClass.Create;
+    ```
+
     See
     https://stackoverflow.com/questions/14003153/how-to-hide-the-inherited-tobject-constructor-while-the-class-has-overloaded-one
     http://andy.jgknet.de/blog/2011/07/hiding-the-tobject-create-constructor/
 
+    Note: FPC way of overloading doesn't have this problem.
+
 6. Check you don't call `Exception.Create` instead of `raise Exception.Create`. It is an easy mistake to forget the `raise` keyword.
+
+    The goal is to capture such invalid code that unfortunately compiles:
+
+    ```pascal
+    begin
+      if WeHaveAProblem then
+        Exception.Create('We have a problem!'); // <- you forgot "raise"
+    end.
+    ```
 
 7. Check for ";;", two semicolons one after the other. This is usually a typo.
 
