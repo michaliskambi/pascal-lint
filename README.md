@@ -8,136 +8,152 @@ This tool parses your modern Object Pascal code and tries to find common mistake
 
 The checks done right now are:
 
-1. Check the validity of parameters for Format (http://www.freepascal.org/docs-html/rtl/sysutils/format.html) and friends.
+## Validity of Format parameters
 
-    The goal is to capture invocations of `Format` that will *definitely* cause an `EConvertError` exception at runtime. For example this code:
+Check the validity of parameters for Format (http://www.freepascal.org/docs-html/rtl/sysutils/format.html) and friends.
 
-    ```pascal
-    Format('%s', [123]);
-    ```
+The goal is to capture invocations of `Format` that will *definitely* cause an `EConvertError` exception at runtime. For example this code:
 
-    It compiles, but it will cause a `EConvertError` exception at runtime (since placeholder `%s` doesn't match a integer `123`; you should have used `%d` instead). It checks the subset of `Format` calls -- when the format pattern is constant, and the number and types of arguments are (at least partially known).
+```pascal
+Format('%s', [123]);
+```
 
-    It detects not only Format, but also CreateFmt methods of the Exception class, and (if you use --castle-engine-extensions option) the WritelnLog and WritelnWarning methods.
+It compiles, but it will cause a `EConvertError` exception at runtime (since placeholder `%s` doesn't match a integer `123`; you should have used `%d` instead). It checks the subset of `Format` calls -- when the format pattern is constant, and the number and types of arguments are (at least partially known).
 
-    LIMITATION: Note that we only have a parser, we don't resolve the symbols between units like a compiler does. So the checker detects the procedures by looking for names "Format", "CreateFmt". If you define in your own units a procedure called "Format" or a method called "CreateFmt", it will check it too, since it doesn't know whether the identifier Format that it sees comes from SysUtils or your custom unit.
+It detects not only Format, but also CreateFmt methods of the Exception class, and (if you use --castle-engine-extensions option) the WritelnLog and WritelnWarning methods.
 
-    TODO: Use PasResolver to resolve symbols?
+LIMITATION: Note that we only have a parser, we don't resolve the symbols between units like a compiler does. So the checker detects the procedures by looking for names "Format", "CreateFmt". If you define in your own units a procedure called "Format" or a method called "CreateFmt", it will check it too, since it doesn't know whether the identifier Format that it sees comes from SysUtils or your custom unit.
 
-2. Check that the constructor and destructors contain an `inherited` call. Forgetting the `inherited` call is an easy mistake, and in 99% cases it should be there. Either `inherited;` or `inherited Create ... / Destroy ...;` will be fine.
+TODO: Use PasResolver to resolve symbols?
 
-    The goal is to capture such invalid code that unfortunately compiles:
+## Constructor, destructor (and additional methods somehow marked as "needs inhrited") must include inherited call
 
-    ```pascal
-    type
-      TMyClass = class(TSomeAncestor)
-        SomethingInside: TObject;
-        constructor Create;
-        destructor Destroy; override;
-      end;
+Check that the constructor and destructors contain an `inherited` call. Forgetting the `inherited` call is an easy mistake, and in 99% cases it should be there. Either `inherited;` or `inherited Create ... / Destroy ...;` will be fine.
 
-    constructor TMyClass.Create;
-    begin
-      // inherited -- without this call, TSomeAncestor initialization is not done
-      SomethingInside := TObject.Create;
-    end;
+The goal is to capture such invalid code that unfortunately compiles:
 
-    destructor TMyClass.Destroy;
-    begin
-      FreeAndNil(SomethingInside);
-      // inherited -- without this call, TSomeAncestor finalization is not done
-    end;
-    ```
+```pascal
+type
+  TMyClass = class(TSomeAncestor)
+    SomethingInside: TObject;
+    constructor Create;
+    destructor Destroy; override;
+  end;
 
-    LIMITATION: We only have a parser, we cannot do code flow analysis. It would be beneficial to extend this check to _"all code paths must call the inherited constructor / destructor"_, not just _"a call to the inherited constructor / destructor is somewhere inside"_. But we simply cannot do this without implementing a code flow analysis on top of the parser information, and implementing that is not something within the scope of this tool.
+constructor TMyClass.Create;
+begin
+  // inherited -- without this call, TSomeAncestor initialization is not done
+  SomethingInside := TObject.Create;
+end;
 
-    TODO: A way to mark some constructor / destructor explicitly as "I know what I'm doing, don't signal a warning here because it doesn't need inherited".
+destructor TMyClass.Destroy;
+begin
+  FreeAndNil(SomethingInside);
+  // inherited -- without this call, TSomeAncestor finalization is not done
+end;
+```
 
-    TODO: A way to mark some other methods as "overridden must call inherited" would be useful. This way we could extend this check to the specific routines. Many virtual methods don't need to have an "inherited" call, but some of them do (the class will not function properly if you forget an "inherited" call). So it would be nice to be able to extend this check for them.
+LIMITATION: We only have a parser, we cannot do code flow analysis. It would be beneficial to extend this check to _"all code paths must call the inherited constructor / destructor"_, not just _"a call to the inherited constructor / destructor is somewhere inside"_. But we simply cannot do this without implementing a code flow analysis on top of the parser information, and implementing that is not something within the scope of this tool.
 
-3. Check `FreeAndNil` is only done on something that is definitely an object instance.
+TODO: A way to mark some constructor / destructor explicitly as "I know what I'm doing, don't signal a warning here because it doesn't need inherited".
 
-    The goal is to capture such invalid code that unfortunately compiles:
+TODO: A way to mark some other methods as "overridden must call inherited" would be useful. This way we could extend this check to the specific routines. Many virtual methods don't need to have an "inherited" call, but some of them do (the class will not function properly if you forget an "inherited" call). So it would be nice to be able to extend this check for them.
 
-    ```pascal
-    uses SysUtils;
-    var
-      I: Integer;
-      W: Word;
-    begin
-      FreeAndNil(I);
-      FreeAndNil(W); // W doesn't even have the same size as Pointer, but stupid FreeAndNil still compiles!
-    end.
-    ```
+## FreeAndNil parameter must be a class instance
 
-    LIMITATION: The check will capture only some invalid cases. Again, we're just a parser, we do not resolve the types of variables with 100% reliability.
+Check `FreeAndNil` is only done on something that is definitely an object instance.
 
-    TODO: Use PasResolver to resolve symbols?
+The goal is to capture such invalid code that unfortunately compiles:
 
-4. Warn when for-loop counter variable being used outside of the loop, and the loop has no "Break". The loop variable value is undefined if you exit the loop without `Break`.
+```pascal
+uses SysUtils;
+var
+  I: Integer;
+  W: Word;
+begin
+  FreeAndNil(I);
+  FreeAndNil(W); // W doesn't even have the same size as Pointer, but stupid FreeAndNil still compiles!
+end.
+```
 
-    The goal is to capture such invalid code that unfortunately compiles:
+LIMITATION: The check will capture only some invalid cases. Again, we're just a parser, we do not resolve the types of variables with 100% reliability.
 
-    ```pascal
-    var
-      I: Integer;
-    begin
-      for I := 0 to 10 do
-        Writeln(I);
-      Writeln('Value of I is undefined now: ', I);
-    end.
-    ```
+TODO: Use PasResolver to resolve symbols?
 
-5. Checks that if you overload the constructor, you have also overloaded the parameterless constructor (or you have secured from it already by making non-public constructor).
+## Value of loop counter variable after the loop ends (without Break) is undefined
 
-    This is a problem in Delphi, caused by Delphi `overload` interpretation meaning "it doesn't hide other identifiers in the same scope, it merely extends what you can do". It means that if you have such class:
+Warn when for-loop counter variable being used outside of the loop, and the loop has no "Break". The loop variable value is undefined if you exit the loop without `Break`.
 
-    ```pascal
-    type
-      TMyClass = class
-        constructor CreateOne(const S: String); overload;
-        constructor CreateTwo(const S1, S2: String); overload;
-      end;
-    ```
+The goal is to capture such invalid code that unfortunately compiles:
 
-    ... I can still create an instance of it using parameterless constructor (which is likely a bug, because then I'm not doing any TMyClass-specific initialization) by
+```pascal
+var
+  I: Integer;
+begin
+  for I := 0 to 10 do
+    Writeln(I);
+  Writeln('Value of I is undefined now: ', I);
+end.
+```
 
-    ```pascal
-    M := TMyClass.Create;
-    ```
+## Make sure you have parameterless constructor if you overload constructors
 
-    See
-    https://stackoverflow.com/questions/14003153/how-to-hide-the-inherited-tobject-constructor-while-the-class-has-overloaded-one
-    http://andy.jgknet.de/blog/2011/07/hiding-the-tobject-create-constructor/
+Checks that if you overload the constructor, you have also overloaded the parameterless constructor (or you have secured from it already by making non-public constructor).
 
-    Note: FPC way of overloading doesn't have this problem.
+This is a problem in Delphi, caused by Delphi `overload` interpretation meaning "it doesn't hide other identifiers in the same scope, it merely extends what you can do". It means that if you have such class:
 
-6. Check you don't call `Exception.Create` instead of `raise Exception.Create`. It is an easy mistake to forget the `raise` keyword.
+```pascal
+type
+  TMyClass = class
+    constructor CreateOne(const S: String); overload;
+    constructor CreateTwo(const S1, S2: String); overload;
+  end;
+```
 
-    The goal is to capture such invalid code that unfortunately compiles:
+... I can still create an instance of it using parameterless constructor (which is likely a bug, because then I'm not doing any TMyClass-specific initialization) by
 
-    ```pascal
-    begin
-      if WeHaveAProblem then
-        Exception.Create('We have a problem!'); // <- you forgot "raise"
-    end.
-    ```
+```pascal
+M := TMyClass.Create;
+```
 
-7. Check for ";;", two semicolons one after the other. This is usually a typo.
+See
+https://stackoverflow.com/questions/14003153/how-to-hide-the-inherited-tobject-constructor-while-the-class-has-overloaded-one
+http://andy.jgknet.de/blog/2011/07/hiding-the-tobject-create-constructor/
 
-8. Check you don't call constructor as a regular method. This causes wild bugs, be reinitializing already-initialized instance, and the constructors (and general class logic) are in general *not* ready for this.
+Note: FPC way of overloading doesn't have this problem.
 
-    The goal is to capture such invalid code that unfortunately compiles:
+## Don't forget to use "raise" before "Exception.Create"
 
-    ```pascal
-    var
-      O: TObject;
-    begin
-      O := TObject.Create;
-      O.Create; // calling constructor like this is invalid
-      O.Free;
-    end.
-    ```
+Check you don't call `Exception.Create` instead of `raise Exception.Create`. It is an easy mistake to forget the `raise` keyword.
+
+The goal is to capture such invalid code that unfortunately compiles:
+
+```pascal
+begin
+  if WeHaveAProblem then
+    Exception.Create('We have a problem!'); // <- you forgot "raise"
+end.
+```
+
+## Double semicolon
+
+Check for ";;", two semicolons one after the other. This is usually a typo. It's also mostly harmless.
+
+## Do not call constructor as a regular method
+
+Check you don't call constructor as a regular method. This causes wild bugs, be reinitializing already-initialized instance, and the constructors (and general class logic) are in general *not* ready for this.
+
+The goal is to capture such invalid code that unfortunately compiles:
+
+```pascal
+var
+  O: TObject;
+begin
+  O := TObject.Create;
+  O.Create; // calling constructor like this is invalid
+  O.Free;
+end.
+```
 
 # Downloading
 
